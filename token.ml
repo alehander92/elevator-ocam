@@ -1,4 +1,4 @@
 (* Lexer *)
 type token =
-  | Def | CallWithBlock | FunctionName
-  | Name
+  | Def | CallWithBlock | Number
+  | Name | Wtf
