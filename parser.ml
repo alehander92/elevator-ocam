@@ -1,122 +1,329 @@
-(*===---------------------------------------------------------------------===
- * Parser
- *===---------------------------------------------------------------------===*)
+(*
+  While Language - a Hackerrank FP challenge:
+  https://www.hackerrank.com/challenges/while-language-fp
 
-(* binop_precedence - This holds the precedence for each binary operator that is
- * defined *)
-let binop_precedence:(char, int) Hashtbl.t = Hashtbl.create 10
+  Program ::= Stmts
+  Stmts ::= Stmt | Stmt ';' Stmts
+  Stmt ::= Assign | IfElse | While
+  Assign ::= Identifier ':=' AExp
+  IfElse ::= 'if' BExp 'then' '{' Stmts '}' 'else' '{' Stmts '}'
+  While ::= 'while' BExp 'do' '{' Stmts '}'
 
-(* precedence - Get the precedence of the pending binary operator token. *)
-let precedence c = try Hashtbl.find binop_precedence c with Not_found -> -1
+  Exp ::= OrExp
+  OrExp ::= AndExp ( 'or' AndExp )*
+  AndExp ::= ROpExp (' and' ROpExp )*
+  ROpExp ::= PlusSubExp [ ('>' | '<') PlusSubExp ]
+  PlusSubExp ::= MulDivExp ( ['+' | '-'] MulDivExp )*
+  MulDivExp ::= PrimaryExp ( ['*' | '/'] PrimaryExp )*
+  PrimaryExp ::= '(' Exp ')' | Identifier | Number | Bool
 
-(* primary
- *   ::= identifier
- *   ::= numberexpr
- *   ::= parenexpr *)
-let rec parse_primary = parser
-  (* numberexpr ::= number *)
-  | [< 'Token.Number n >] -> Ast.Number n
+  Bool ::= 'true' | 'false'
+  Number ::= ([0-9])+
+  Identifier ::= [A-Za-z][a-zA-Z0-9]*
+*)
 
-  (* parenexpr ::= '(' expression ')' *)
-  | [< 'Token.Kwd '('; e=parse_expr; 'Token.Kwd ')' ?? "expected ')'" >] -> e
-
-  (* identifierexpr
-   *   ::= identifier
-   *   ::= identifier '(' argumentexpr ')' *)
-  | [< 'Token.Ident id; stream >] ->
-      let rec parse_args accumulator = parser
-        | [< e=parse_expr; stream >] ->
-            begin parser
-              | [< 'Token.Kwd ','; e=parse_args (e :: accumulator) >] -> e
-              | [< >] -> e :: accumulator
-            end stream
-        | [< >] -> accumulator
-      in
-      let rec parse_ident id = parser
-        (* Call. *)
-        | [< 'Token.Kwd '(';
-             args=parse_args [];
-             'Token.Kwd ')' ?? "expected ')'">] ->
-            Ast.Call (id, Array.of_list (List.rev args))
-
-        (* Simple variable ref. *)
-        | [< >] -> Ast.Variable id
-      in
-      parse_ident id stream
-
-  | [< >] -> raise (Stream.Error "unknown token when expecting an expression.")
-
-(* binoprhs
- *   ::= ('+' primary)* *)
-and parse_bin_rhs expr_prec lhs stream =
-  match Stream.peek stream with
-  (* If this is a binop, find its precedence. *)
-  | Some (Token.Kwd c) when Hashtbl.mem binop_precedence c ->
-      let token_prec = precedence c in
-
-      (* If this is a binop that binds at least as tightly as the current binop,
-       * consume it, otherwise we are done. *)
-      if token_prec < expr_prec then lhs else begin
-        (* Eat the binop. *)
-        Stream.junk stream;
-
-        (* Parse the primary expression after the binary operator. *)
-        let rhs = parse_primary stream in
-
-        (* Okay, we know this is a binop. *)
-        let rhs =
-          match Stream.peek stream with
-          | Some (Token.Kwd c2) ->
-              (* If BinOp binds less tightly with rhs than the operator after
-               * rhs, let the pending operator take rhs as its lhs. *)
-              let next_prec = precedence c2 in
-              if token_prec < next_prec
-              then parse_bin_rhs (token_prec + 1) rhs stream
-              else rhs
-          | _ -> rhs
-        in
-
-        (* Merge lhs/rhs. *)
-        let lhs = Ast.Binary (c, lhs, rhs) in
-        parse_bin_rhs expr_prec lhs stream
-      end
-  | _ -> lhs
-
-(* expression
- *   ::= primary binoprhs *)
-and parse_expr = parser
-  | [< lhs=parse_primary; stream >] -> parse_bin_rhs 0 lhs stream
-
-(* prototype
- *   ::= id '(' id* ')' *)
-let parse_prototype =
-  let rec parse_args accumulator = parser
-    | [< 'Token.Ident id; e=parse_args (id::accumulator) >] -> e
-    | [< >] -> accumulator
+(* ----------------------------- opal.ml START ------------------------------ *)
+module LazyStream = struct
+  type 'a t = Cons of 'a * 'a t Lazy.t | Nil
+  let of_stream stream =
+    let rec next stream =
+      try Cons(Stream.next stream, lazy (next stream))
+      with Stream.Failure -> Nil
+    in
+    next stream
+  let of_string str = str |> Stream.of_string |> of_stream
+  let of_channel ic = ic |> Stream.of_channel |> of_stream
+  let of_function f =
+    let rec next f =
+      match f () with
+      | Some x -> Cons(x, lazy (next f))
+      | None -> Nil
+    in
+    next f
+end
+let implode l = String.concat "" (List.map (String.make 1) l)
+let explode s =
+  let l = ref [] in
+  String.iter (fun c -> l := c :: !l) s;
+  List.rev !l
+let (%) f g = fun x -> g (f x)
+type 'token input = 'token LazyStream.t
+type ('token, 'result) parser = 'token input -> ('result * 'token input) option
+let parse parser input =
+  match parser input with
+  | Some(res, _) -> Some res
+  | None -> None
+let return x input = Some(x, input)
+let (>>=) x f =
+  fun input ->
+    match x input with
+    | Some(result', input') -> f result' input'
+    | None -> None
+let (<|>) x y =
+  fun input ->
+    match x input with
+    | Some _ as ret -> ret
+    | None -> y input
+let rec scan x input =
+  match x input with
+  | Some(result', input') -> LazyStream.Cons(result', lazy (scan x input'))
+  | None -> LazyStream.Nil
+let mzero _ = None
+let any = function
+  | LazyStream.Cons(token, input') -> Some(token, Lazy.force input')
+  | LazyStream.Nil -> None
+let satisfy test = any >>= (fun res -> if test res then return res else mzero)
+let eof x = function LazyStream.Nil -> Some(x, LazyStream.Nil) | _ -> None
+let (=>) x f = x >>= fun r -> return (f r)
+let (>>) x y = x >>= fun _ -> y
+let (<<) x y = x >>= fun r -> y >>= fun _ -> return r
+let (<~>) x xs = x >>= fun r -> xs >>= fun rs -> return (r :: rs)
+let rec choice = function [] -> mzero | h :: t -> (h <|> choice t)
+let rec count n x = if n > 0 then x <~> count (n - 1) x else return []
+let between op ed x = op >> x << ed
+let option default x = x <|> return default
+let optional x = option () (x >> return ())
+let rec skip_many x = option () (x >>= fun _ -> skip_many x)
+let skip_many1 x = x >> skip_many x
+let rec many x = option [] (x >>= fun r -> many x >>= fun rs -> return (r :: rs))
+let many1 x = x <~> many x
+let sep_by1 x sep = x <~> many (sep >> x)
+let sep_by x sep = sep_by1 x sep <|> return []
+let end_by1 x sep = sep_by1 x sep << sep
+let end_by x sep = end_by1 x sep <|> return []
+let chainl1 x op =
+  let rec loop a = (op >>= fun f -> x >>= fun b -> loop (f a b)) <|> return a in
+  x >>= loop
+let chainl x op default = chainl1 x op <|> return default
+let rec chainr1 x op =
+  x >>= fun a -> (op >>= fun f -> chainr1 x op >>= f a) <|> return a
+let chainr x op default = chainr1 x op <|> return default
+let exactly x = satisfy ((=) x)
+let one_of  l = satisfy (fun x -> List.mem x l)
+let none_of l = satisfy (fun x -> not (List.mem l x))
+let range l r = satisfy (fun x -> l <= x && x <= r)
+let space     = one_of [' '; '\t'; '\r'; '\n']
+let spaces    = skip_many space
+let newline   = exactly '\n'
+let tab       = exactly '\t'
+let upper     = range 'A' 'Z'
+let lower     = range 'a' 'z'
+let digit     = range '0' '9'
+let letter    = lower  <|> upper
+let alpha_num = letter <|> digit
+let hex_digit = range 'a' 'f' <|> range 'A' 'F'
+let oct_digit = range '0' '7'
+let lexeme x = spaces >> x
+let token s =
+  let rec loop s i =
+    if i >= String.length s
+    then return s
+    else exactly s.[i] >> loop s (i + 1)
   in
+  lexeme (loop s 0)
+(* ------------------------------ opal.ml END ------------------------------- *)
 
-  parser
-  | [< 'Token.Ident id;
-       'Token.Kwd '(' ?? "expected '(' in prototype";
-       args=parse_args [];
-       'Token.Kwd ')' ?? "expected ')' in prototype" >] ->
-      (* success. *)
-      Ast.Prototype (id, Array.of_list (List.rev args))
 
-  | [< >] ->
-      raise (Stream.Error "expected function name in prototype")
+(* open Opal *)
 
-(* definition ::= 'def' prototype expression *)
-let parse_definition = parser
-  | [< 'Token.Def; p=parse_prototype; e=parse_expr >] ->
-      Ast.Function (p, e)
+type exp = PlusExp of exp * exp
+         | SubExp of exp * exp
+         | MulExp of exp * exp
+         | DivExp of exp * exp
+         | Variable of string
+         | Number of int
+         | LTExp of exp * exp
+         | GTExp of exp * exp
+         | AndExp of exp * exp
+         | OrExp of exp * exp
+         | Bool of bool
 
-(* toplevelexpr ::= expression *)
-let parse_toplevel = parser
-  | [< e=parse_expr >] ->
-      (* Make an anonymous proto. *)
-      Ast.Function (Ast.Prototype ("", [||]), e)
+type prog = Stmts of prog list
+          | Assign of string * exp
+          | IfElse of exp * prog * prog
+          | While of exp * prog
 
-(*  external ::= 'extern' prototype *)
-let parse_extern = parser
-  | [< 'Token.Extern; e=parse_prototype >] -> e
+exception Syntax_error
+exception Runtime_error
+
+let rec join separator = function
+    | []    -> ""
+    | [h]   -> h
+    | h::t  -> h ^ separator ^ join separator t
+
+let rec dumpe = function
+    | PlusExp (l, r) -> "Plus<" ^ (dumpe l) ^ "," ^ (dumpe r) ^ ">"
+    | SubExp (l, r)  -> "Su<" ^ (dumpe l) ^ "," ^ (dumpe r) ^ ">"
+    | MulExp (l, r)  -> "Mu<" ^ (dumpe l) ^ "," ^ (dumpe r) ^ ">"
+    | DivExp (l, r)  -> "Di<" ^ (dumpe l) ^ "," ^ (dumpe r) ^ ">"
+    | Variable s     -> "Variable<" ^ s ^ ">"
+    | Number n       -> "Number<" ^ (string_of_int n) ^ ">"
+    | LTExp (l, r)  -> "lte<" ^ (dumpe l) ^ "," ^ (dumpe r) ^ ">"
+    | GTExp (l, r)  -> "gte<" ^ (dumpe l) ^ "," ^ (dumpe r) ^ ">"
+    | AndExp (l, r)  -> "and<" ^ (dumpe l) ^ "," ^ (dumpe r) ^ ">"
+    | OrExp (l, r)   -> "or<" ^ (dumpe l) ^ "," ^ (dumpe r) ^ ">"
+    | Bool b      -> "bool<" ^ (string_of_bool b) ^ ">";;
+
+
+let rec dump = function
+    | Stmts elements      -> let s = join ", " (List.map dump elements) in "[" ^ s ^ "]"
+    | Assign (name, expr) -> "Assign<" ^ name ^ " = " ^ (dumpe expr) ^ ">"
+    | IfElse (test, if_true, if_false) ->
+            "If<" ^ (dumpe test) ^ "," ^ (dump if_true) ^ "," ^ (dump if_false) ^ ">"
+    | While (test, block) -> "While<" ^ (dumpe test) ^ "," ^ (dump block) ^ ">";;
+
+(* val dump : prog list -> string = <fun> *)
+
+(* parser *)
+
+let reserved = [
+  "true";
+  "false";
+  "if";
+  "then";
+  "else";
+  "while";
+  "do";
+  "and";
+  "or";
+]
+
+let ident = (spaces >> letter <~> many alpha_num) => implode >>= function
+  | s when List.mem s reserved -> mzero
+  | s -> return s
+
+let number = spaces >> many1 digit => implode % int_of_string
+
+let parens = between (token "(") (token ")")
+let addop = token "+" >> return (fun x y -> PlusExp(x, y))
+let subop = token "-" >> return (fun x y -> SubExp(x, y))
+let mulop = token "*" >> return (fun x y -> MulExp(x, y))
+let divop = token "/" >> return (fun x y -> DivExp(x, y))
+let ltop  = token "<" >> return (fun x y -> LTExp(x, y))
+let gtop  = token ">" >> return (fun x y -> GTExp(x, y))
+let orop  = token "or"  >> return (fun x y -> OrExp(x, y))
+let andop = token "and" >> return (fun x y -> AndExp(x, y))
+let atom = (ident => (fun s -> Variable s))
+       <|> (number => (fun x -> Number x))
+       <|> (token "true" >> return (Bool true))
+       <|> (token "false" >> return (Bool false))
+
+let rec expr input = (chainl1 and_expr orop) input
+and and_expr input = (chainl1 rop_expr andop) input
+and rop_expr input = (chainl1 add_expr (ltop <|> gtop)) input
+and add_expr input = (chainl1 mul_expr (addop <|> subop)) input
+and mul_expr input = (chainl1 prm_expr (mulop <|> divop)) input
+and prm_expr input = (parens expr <|> atom) input
+
+let rec stmts input = (sep_by1 stmt (token ";") => (fun l -> Stmts l)) input
+and stmt input = (if_stmt <|> while_stmt <|> assign_stmt) input
+and if_stmt input =
+  (token "if"   >> (* if *)
+   expr         >>= fun pred ->
+   token "then" >> (* then *)
+   token "{"    >> (* { *)
+   stmts        >>= fun thn ->
+   token "}"    >> (* } *)
+   token "else" >> (* else *)
+   token "{"    >> (* { *)
+   stmts        >>= fun els ->
+   token "}"    >>
+   return (IfElse (pred, thn, els))) input
+and while_stmt input =
+  (token "while" >> (* while *)
+   expr          >>= fun guard ->
+   token "do"    >> (* do *)
+   token "{"     >> (* { *)
+   stmts         >>= fun body ->
+   token "}"     >>
+   return (While (guard, body))) input
+and assign_stmt input =
+  (ident      >>= fun lhs ->
+   token ":=" >>
+   expr       >>= fun rhs ->
+   return (Assign (lhs, rhs))) input
+
+let prog = stmts << (spaces << eof ())
+let parse_prog input = parse prog input
+
+(* eval *)
+let rec eval prog env =
+  match prog with
+    | Stmts [] -> ()
+    | Stmts (x::xs) ->
+        eval x env;
+        eval (Stmts xs) env
+    | Assign (lhs, rhs) ->
+        let value = eval_aexp rhs env in
+        Hashtbl.replace env lhs value
+    | IfElse (pred, thn, els) ->
+        if (eval_bexp pred env) then
+          eval thn env
+        else
+          eval els env
+    | While (guard, body) ->
+        let rec loop () =
+          if (eval_bexp guard env) then
+            begin
+              eval body env;
+              loop ()
+            end
+          else ()
+        in
+        loop ()
+
+and eval_aexp aexp env =
+  match aexp with
+    | PlusExp (l, r) ->
+        let l' = eval_aexp l env
+        and r' = eval_aexp r env in
+        l' + r'
+    | SubExp (l, r) ->
+        let l' = eval_aexp l env
+        and r' = eval_aexp r env in
+        l' - r'
+    | MulExp (l, r) ->
+        let l' = eval_aexp l env
+        and r' = eval_aexp r env in
+        l' * r'
+    | DivExp (l, r) ->
+        let l' = eval_aexp l env
+        and r' = eval_aexp r env in
+        l' / r'
+    | Variable x -> Hashtbl.find env x
+    | Number n -> n
+    | _ -> raise Runtime_error
+
+and eval_bexp bexp env =
+  match bexp with
+    | LTExp (l, r) ->
+        let l' = eval_aexp l env
+        and r' = eval_aexp r env in
+        l' < r'
+    | GTExp (l, r) ->
+        let l' = eval_aexp l env
+        and r' = eval_aexp r env in
+        l' > r'
+    | AndExp (l, r) ->
+        let l' = eval_bexp l env
+        and r' = eval_bexp r env in
+        l' && r'
+    | OrExp (l, r) ->
+        let l' = eval_bexp l env
+        and r' = eval_bexp r env in
+        l' || r'
+    | Bool b -> b
+    | _ -> raise Runtime_error
+
+let () =
+  let src = LazyStream.of_channel stdin in
+  match parse_prog src with
+  | None -> raise Syntax_error
+  | Some prog ->
+      let () = Printf.printf "%s" (dump prog)
+    in
+      let env = Hashtbl.create 16 in
+      eval prog env;
+      let pairs = Hashtbl.fold (fun k v acc -> (k, v) :: acc) env [] in
+      let pairs' = List.sort (fun (k1, _) (k2, _) -> compare k1 k2) pairs in
+      List.iter (fun (k, v) -> Printf.printf "%s %d\n" k v) pairs'
