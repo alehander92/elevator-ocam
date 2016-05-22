@@ -11,14 +11,14 @@
   Exp ::= Call | NewInstance | Lambda | Int | String | Name | BinOp
   Call ::= Name '(' (Exp ws?)* ')'
   NewInstance ::= Typename '(' (Exp ws?)* ')'
-  Lambda ::= '[' ParameterList? '->' Stmts ']'
+  Lambda ::= '[' ParameterList? '~' Stmts ']'
   ParameterList ::= '(' (Name ws)* ')'
   Int ::= ([0-9])+
   String ::= '"' ([^\"]*) '"'
   Name ::= [A-Za-z][a-zA-Z0-9_]*
   BinOp ::= Exp Op Exp
 
-  PatternExpr ::= '|' ws Pattern ws '=>' ws Exp
+  PatternExpr ::= '|' ws Pattern ws '~' ws Exp
   Pattern ::= TypePattern | Int
   TypePattern ::= Typename ws (Name ws?)*
   Typename := [A-Z][a-zA-Z]*
