@@ -128,23 +128,34 @@ let token s =
 
 (* open Opal *)
 
-type exp = PlusExp of exp * exp
-         | SubExp of exp * exp
-         | MulExp of exp * exp
-         | DivExp of exp * exp
-         | Variable of string
+type typename = Typename of string
+type name = Name of string
+
+type op = BinAdd | BinSub | BinMult | BinDiv | BinPower
+
+type pattern = Pattern of typename * name list * exp
+
+and pattern_expression = pattern * exp
+
+(* some pseudocode here i am still not sure how exactly 
+the type system works *)
+and prog = Stmts of prog list
+         | Assignment of exp * exp
+         | Receive of name list * pattern_expression list
+         | Send of exp * exp
+and stmts = Stmts of prog list
+
+and exp = BinOp of op * exp * exp
+         | Call of exp * exp list
+         | NewInstance of exp * exp list
+         | Name of string
          | Number of int
-         | LTExp of exp * exp
-         | GTExp of exp * exp
-         | AndExp of exp * exp
-         | OrExp of exp * exp
+         | String of string
          | Bool of bool
-
-type prog = Stmts of prog list
-          | Assign of string * exp
-          | IfElse of exp * prog * prog
-          | While of exp * prog
-
+         | Typename of string
+         | Array of exp list
+         | Lambda of name list * stmts
+         
 exception Syntax_error
 exception Runtime_error
 
@@ -153,26 +164,37 @@ let rec join separator = function
     | [h]   -> h
     | h::t  -> h ^ separator ^ join separator t
 
-let rec dumpe = function
-    | PlusExp (l, r) -> "Plus<" ^ (dumpe l) ^ "," ^ (dumpe r) ^ ">"
-    | SubExp (l, r)  -> "Su<" ^ (dumpe l) ^ "," ^ (dumpe r) ^ ">"
-    | MulExp (l, r)  -> "Mu<" ^ (dumpe l) ^ "," ^ (dumpe r) ^ ">"
-    | DivExp (l, r)  -> "Di<" ^ (dumpe l) ^ "," ^ (dumpe r) ^ ">"
-    | Variable s     -> "Variable<" ^ s ^ ">"
-    | Number n       -> "Number<" ^ (string_of_int n) ^ ">"
-    | LTExp (l, r)  -> "lte<" ^ (dumpe l) ^ "," ^ (dumpe r) ^ ">"
-    | GTExp (l, r)  -> "gte<" ^ (dumpe l) ^ "," ^ (dumpe r) ^ ">"
-    | AndExp (l, r)  -> "and<" ^ (dumpe l) ^ "," ^ (dumpe r) ^ ">"
-    | OrExp (l, r)   -> "or<" ^ (dumpe l) ^ "," ^ (dumpe r) ^ ">"
-    | Bool b      -> "bool<" ^ (string_of_bool b) ^ ">";;
+let rec dumpop = function
+    | BinAdd -> "+"
+    | BinSub -> "-"
+    | BinMult -> "*"
+    | BinPower -> "**"
+    | BinDiv -> "/";;
 
+
+let rec dumpe = function
+    | BinOp (op, l, r) -> "BinOp<" ^ (dumpop op) ^ "," ^ (dumpe l) ^ "," ^ (dumpe r) ^ ">"
+    | Call (callee, args) -> "Call<" ^ (dumpe callee) ^ ",[" ^ (join "\n  " (List.map dumpe args)) ^ "]>"
+    | NewInstance (class_, args) -> "NewInstance<" ^ (dumpe class_) ^ ",[" ^ (join "\n  " (List.map dumpe args)) ^ "]>"
+    | Name s     -> "Variable<" ^ s ^ ">"
+    | Typename t -> "Typename<" ^ t ^ ">"
+    | Number n       -> "Number<" ^ (string_of_int n) ^ ">"
+    | String n       -> "String<" ^ (string_of_int n) ^ ">"
+    | Bool b      -> "Bool<" ^ (string_of_bool b) ^ ">"
+    | Array e      -> "List<" ^ (join "\n  " (List.map dumpe e)) ^ "\n>"
+    | Lambda (a, b)   -> "Lambda<" ^ (dumpe a) ^ ",\n" ^ (dump b) ^ "\n>"
 
 let rec dump = function
     | Stmts elements      -> let s = join ", " (List.map dump elements) in "[" ^ s ^ "]"
-    | Assign (name, expr) -> "Assign<" ^ name ^ " = " ^ (dumpe expr) ^ ">"
-    | IfElse (test, if_true, if_false) ->
-            "If<" ^ (dumpe test) ^ "," ^ (dump if_true) ^ "," ^ (dump if_false) ^ ">"
-    | While (test, block) -> "While<" ^ (dumpe test) ^ "," ^ (dump block) ^ ">";;
+    | Assignment (name, expr) -> "Assign<" ^ name ^ " = " ^ (dumpe expr) ^ ">"
+    | Receive (args, patterns) -> "If<" ^ (join ", " (List.map dumpe args)) ^ "," ^ (join "\n  " (List.map dumppa patterns)) >> ">"
+    | Send (pid, exp) -> "<- " ^ (dumpe pid) ^ ", " ^ (dumpe exp) ^ ""
+
+let rec dumppa = function
+    | PatternExpression (p, e) -> "@[" ^ (dumppb p) ^ " " ^ (dumpe e) "]"
+
+let rec dumppb = function
+    | Pattern (head, args) -> "@[" ^ (dumpe head) ^ " " ^ (join "  " (List.map dumpe args));;
 
 (* val dump : prog list -> string = <fun> *)
 
