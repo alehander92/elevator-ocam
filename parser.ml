@@ -1,25 +1,27 @@
 (*
-  While Language - a Hackerrank FP challenge:
-  https://www.hackerrank.com/challenges/while-language-fp
-
+  Elevator:
+  
   Program ::= Stmts
-  Stmts ::= Stmt | Stmt ';' Stmts
-  Stmt ::= Assign | IfElse | While
-  Assign ::= Identifier ':=' AExp
-  IfElse ::= 'if' BExp 'then' '{' Stmts '}' 'else' '{' Stmts '}'
-  While ::= 'while' BExp 'do' '{' Stmts '}'
+  Stmts ::= Stmt | Stmt '\n' Stmts
+  Stmt ::= Assign | Receive | Send
+  Assign ::= 'let' Name '=' Exp
+  Receive ::= '->' Name ':' nl PatternExpr*
+  Send ::= Name '<-' Exp
 
-  Exp ::= OrExp
-  OrExp ::= AndExp ( 'or' AndExp )*
-  AndExp ::= ROpExp (' and' ROpExp )*
-  ROpExp ::= PlusSubExp [ ('>' | '<') PlusSubExp ]
-  PlusSubExp ::= MulDivExp ( ['+' | '-'] MulDivExp )*
-  MulDivExp ::= PrimaryExp ( ['*' | '/'] PrimaryExp )*
-  PrimaryExp ::= '(' Exp ')' | Identifier | Number | Bool
+  Exp ::= Call | NewInstance | Lambda | Int | String | Name | BinOp
+  Call ::= Name '(' (Exp ws?)* ')'
+  NewInstance ::= Typename '(' (Exp ws?)* ')'
+  Lambda ::= '[' ParameterList? '->' Stmts ']'
+  ParameterList ::= '(' (Name ws)* ')'
+  Int ::= ([0-9])+
+  String ::= '"' ([^\"]*) '"'
+  Name ::= [A-Za-z][a-zA-Z0-9_]*
+  BinOp ::= Exp Op Exp
 
-  Bool ::= 'true' | 'false'
-  Number ::= ([0-9])+
-  Identifier ::= [A-Za-z][a-zA-Z0-9]*
+  PatternExpr ::= '|' ws Pattern ws '=>' ws Exp
+  Pattern ::= TypePattern | Int
+  TypePattern ::= Typename ws (Name ws?)*
+  Typename := [A-Z][a-zA-Z]*
 *)
 
 (* ----------------------------- opal.ml START ------------------------------ *)
