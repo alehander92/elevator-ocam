@@ -1,3 +1,8 @@
+(*===----------------------------------------------------------------------===
+ * Top-Level parsing and JIT Driver
+ *===----------------------------------------------------------------------===*)
+
+(* top ::= definition | external | expression | ';' *)
 let rec main_loop stream =
   match Stream.peek stream with
   | None -> ()
@@ -25,5 +30,5 @@ let rec main_loop stream =
           Stream.junk stream;
           print_endline s;
       end;
-      print_string "elevator ~ "; flush stdout;
+      print_string "ready> "; flush stdout;
       main_loop stream
